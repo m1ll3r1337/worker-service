@@ -105,7 +105,7 @@ formatters:
       sections:
         - standard
         - default
-        - prefix(github.com/MoM-Repo/worker-service)
+        - prefix(github.com/m1ll3r1337/worker-service)
         - blank
         - dot
       custom-order: true
