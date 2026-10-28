@@ -25,7 +25,7 @@ WORKDIR /app
 COPY --from=builder /app/main .
 
 # Порт по умолчанию (из APP_PROCESSOR_WEB_SERVER_LISTEN_PORT)
-EXPOSE 9000
+EXPOSE 8083
 
 ENTRYPOINT ["./main"]
 CMD ["web-server"]
