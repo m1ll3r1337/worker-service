@@ -21,6 +21,7 @@ import (
 	eprocessor "github.com/m1ll3r1337/worker-service/internal/app/processor/event"
 	rprocessor "github.com/m1ll3r1337/worker-service/internal/app/processor/http"
 	mmonitor "github.com/m1ll3r1337/worker-service/internal/app/processor/monitor"
+	rcredis "github.com/m1ll3r1337/worker-service/internal/app/repository/conn/redis"
 	"github.com/m1ll3r1337/worker-service/internal/app/util"
 	"github.com/m1ll3r1337/worker-service/internal/pkg/broker"
 	"github.com/m1ll3r1337/worker-service/internal/pkg/broker/codec"
@@ -47,6 +48,9 @@ type Builder struct {
 
 	// Шина события order.created (consumer)
 	busOrderCreated broker.Bus[entity.EventOrderCreated]
+
+	// Подключения
+	connRedis *rcredis.Client
 
 	// TODO: добавить зависимости по мере появления (repositories, services, handlers, monitors).
 }
@@ -95,6 +99,23 @@ func (b *Builder) buildConfig(args config.LoadArgs, injectors []func(c *config.C
 			injector(&config.Root)
 		}
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+///// REPOSITORIES /////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+// BuildConnRedis открывает подключение к Redis и проверяет его через Ping.
+func (b *Builder) BuildConnRedis() {
+	b.exec(func(b *Builder) {
+		rdb, err := rcredis.NewClient(b.ctx, config.Root.Repository.Redis)
+		if err != nil {
+			b.err = fmt.Errorf("init redis conn: %w", err)
+			return
+		}
+
+		b.connRedis = rdb
+	})
 }
 
 ////////////////////////////////////////////////////////////////////////////////
