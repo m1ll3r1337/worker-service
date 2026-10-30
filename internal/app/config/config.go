@@ -21,6 +21,7 @@ type (
 		Monitor    section.Monitor
 		Broker     section.Broker
 		Repository section.Repository
+		Client     section.Client
 		Meta       Meta `ignore:"true"`
 	}
 
