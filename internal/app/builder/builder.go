@@ -14,6 +14,7 @@ import (
 	"github.com/urfave/cli/v2"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/gorilla/mux/otelmux"
 
+	"github.com/m1ll3r1337/worker-service/internal/app/client/fixer"
 	"github.com/m1ll3r1337/worker-service/internal/app/config"
 	"github.com/m1ll3r1337/worker-service/internal/app/entity"
 	eorder "github.com/m1ll3r1337/worker-service/internal/app/handler/event/order"
@@ -21,6 +22,11 @@ import (
 	eprocessor "github.com/m1ll3r1337/worker-service/internal/app/processor/event"
 	rprocessor "github.com/m1ll3r1337/worker-service/internal/app/processor/http"
 	mmonitor "github.com/m1ll3r1337/worker-service/internal/app/processor/monitor"
+	"github.com/m1ll3r1337/worker-service/internal/app/repository"
+	rcredis "github.com/m1ll3r1337/worker-service/internal/app/repository/conn/redis"
+	rcurrency "github.com/m1ll3r1337/worker-service/internal/app/repository/currency"
+	"github.com/m1ll3r1337/worker-service/internal/app/service"
+	scurrency "github.com/m1ll3r1337/worker-service/internal/app/service/currency"
 	"github.com/m1ll3r1337/worker-service/internal/app/util"
 	"github.com/m1ll3r1337/worker-service/internal/pkg/broker"
 	"github.com/m1ll3r1337/worker-service/internal/pkg/broker/codec"
@@ -48,7 +54,17 @@ type Builder struct {
 	// Шина события order.created (consumer)
 	busOrderCreated broker.Bus[entity.EventOrderCreated]
 
-	// TODO: добавить зависимости по мере появления (repositories, services, handlers, monitors).
+	// Подключения
+	connRedis *rcredis.Client
+
+	// Внешние клиенты
+	clientFixer *fixer.Client
+
+	// Репозитории
+	repoCurrencyRate repository.CurrencyRate
+
+	// Сервисы
+	currencyService service.Currency
 }
 
 // NewBuilder создаёт новый Builder и настраивает обработку сигналов OS.
@@ -95,6 +111,51 @@ func (b *Builder) buildConfig(args config.LoadArgs, injectors []func(c *config.C
 			injector(&config.Root)
 		}
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+///// REPOSITORIES /////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+// BuildConnRedis открывает подключение к Redis и проверяет его через Ping.
+func (b *Builder) BuildConnRedis() {
+	b.exec(func(b *Builder) {
+		rdb, err := rcredis.NewClient(b.ctx, config.Root.Repository.Redis)
+		if err != nil {
+			b.err = fmt.Errorf("init redis conn: %w", err)
+			return
+		}
+
+		b.connRedis = rdb
+	})
+}
+
+// BuildClientFixer создаёт HTTP-клиент Fixer API (курсы валют).
+func (b *Builder) BuildClientFixer() {
+	b.exec(func(b *Builder) {
+		client := fixer.NewClient(config.Root.Client.Fixer)
+		b.clientFixer = client
+	})
+}
+
+// BuildRepoCurrencyRate создаёт Redis-кэш курсов валют.
+func (b *Builder) BuildRepoCurrencyRate() {
+	b.exec(func(b *Builder) {
+		repo := rcurrency.NewRepoFromRedis(b.connRedis.Client, config.Root.Client.Fixer.CacheTTL)
+		b.repoCurrencyRate = repo
+	}, b.connRedis)
+}
+
+////////////////////////////////////////////////////////////////////////////////
+///// SERVICES /////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+
+// BuildServiceCurrency собирает сервис курсов валют (cache-aside: Redis -> Fixer).
+func (b *Builder) BuildServiceCurrency() {
+	b.exec(func(b *Builder) {
+		currencyService := scurrency.NewService(b.clientFixer, b.repoCurrencyRate)
+		b.currencyService = currencyService
+	}, b.clientFixer, b.repoCurrencyRate)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
