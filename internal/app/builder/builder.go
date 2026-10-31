@@ -27,6 +27,7 @@ import (
 	rcurrency "github.com/m1ll3r1337/worker-service/internal/app/repository/currency"
 	"github.com/m1ll3r1337/worker-service/internal/app/service"
 	scurrency "github.com/m1ll3r1337/worker-service/internal/app/service/currency"
+	sdelivery "github.com/m1ll3r1337/worker-service/internal/app/service/delivery"
 	"github.com/m1ll3r1337/worker-service/internal/app/util"
 	"github.com/m1ll3r1337/worker-service/internal/pkg/broker"
 	"github.com/m1ll3r1337/worker-service/internal/pkg/broker/codec"
@@ -54,6 +55,9 @@ type Builder struct {
 	// Шина события order.created (consumer)
 	busOrderCreated broker.Bus[entity.EventOrderCreated]
 
+	// Шина события order.delivery.calculated (producer)
+	busOrderDeliveryCalculated broker.Bus[entity.EventOrderDeliveryCalculated]
+
 	// Подключения
 	connRedis *rcredis.Client
 
@@ -65,6 +69,7 @@ type Builder struct {
 
 	// Сервисы
 	currencyService service.Currency
+	deliveryService service.Delivery
 }
 
 // NewBuilder создаёт новый Builder и настраивает обработку сигналов OS.
@@ -158,6 +163,14 @@ func (b *Builder) BuildServiceCurrency() {
 	}, b.clientFixer, b.repoCurrencyRate)
 }
 
+// BuildServiceDelivery собирает сервис расчёта доставки (база 10 EUR -> валюта заказа).
+func (b *Builder) BuildServiceDelivery() {
+	b.exec(func(b *Builder) {
+		s := sdelivery.NewService(b.currencyService)
+		b.deliveryService = s
+	}, b.currencyService)
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 ///// HANDLERS /////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -205,9 +218,25 @@ func (b *Builder) BuildConsumerOrderCreated() {
 
 		b.busOrderCreated = bus
 
-		handler := eorder.NewHandler()
+		handler := eorder.NewHandler(b.deliveryService, b.busOrderDeliveryCalculated)
 		p := eprocessor.NewOrderCreatedEventsCatcher(handler, b.busOrderCreated)
 		b.processors = append(b.processors, p)
+	}, b.kafkaClient, b.deliveryService, b.busOrderDeliveryCalculated)
+}
+
+// BuildBusOrderDeliveryCalculated создаёт publish-шину топика order.delivery.calculated.
+func (b *Builder) BuildBusOrderDeliveryCalculated() {
+	b.exec(func(b *Builder) {
+		cfg := config.Root.Broker.Kafka
+
+		bus, err := broker.NewBus[entity.EventOrderDeliveryCalculated](b.kafkaClient,
+			codec.NewCodecJson[entity.EventOrderDeliveryCalculated](),
+			cfg.ModelOrder.DeliveryCalculated.Topic, cfg.ConsumerGroup)
+		if err != nil {
+			b.err = fmt.Errorf("failed to create order.delivery.calculated bus: %w", err)
+			return
+		}
+		b.busOrderDeliveryCalculated = bus
 	}, b.kafkaClient)
 }
 
